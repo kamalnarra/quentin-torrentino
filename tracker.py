@@ -8,7 +8,7 @@ import math
 
 
 class Tracker:
-    def __init__(self, path):
+    def __init__(self, path, torrent):
         with open(path, "rb") as f:
             torrent_data = f.read()
         torrent = decode(torrent_data)
@@ -33,6 +33,7 @@ class Tracker:
         self.mdf5sum = self.info.get(b"md5sum", b"").decode("utf-8")
         self.num_pieces = math.ceil(self.length / self.piece_length)
         self.blocks_per_piece = math.ceil(self.piece_length / 2**14)
+        self.torrent = torrent
 
     def __str__(self):
         output = (

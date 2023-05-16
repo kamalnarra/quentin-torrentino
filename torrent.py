@@ -8,26 +8,28 @@ import urllib.parse
 import asyncio
 from download import DownloadHandler, FileWriter
 import traceback
-
-
+from utils import pretty_print
 class Torrent:
-    def __init__(self, path, port=6881, compact=0, max_connections=50):
+    def __init__(self, path, verbose=True, port=6881, compact=0, max_connections=50):
         self.peer_id = "-WC0001-" + "".join(
             [str(random.randint(0, 9)) for _ in range(12)]
         )
-        self.tracker = Tracker(path)
-        self.download_handler = DownloadHandler(self.tracker)
         self.port = port  # what port is the client reading from
         self.compact = compact  # do we accept compact responses
         self.uploaded = 0  # bytes uploaded
         self.downloaded = 0  # bytes downloaded
-        self.left = self.tracker.length  # bytes left before fiel is complete
         self.event = "started"  # auto-set to started and will be updated over time
         self.interval = 0
         self.peer_list = []  # empty to start
         self.max_connections = max_connections
+        self.verbose = verbose # if you want to allow stacktrace printing
+        self.peer_list_lock = asyncio.Lock() # prevents race conditions when updating peer list
+        self.tracker = Tracker(path, self)
         self.filewriter = FileWriter(self.tracker.name, self.tracker.piece_length)
+        self.download_handler = DownloadHandler(self.tracker, self)
+        self.left = self.tracker.length  # bytes left before fiel is complete
         self.ping_tracker()  # interval and peer list are updated
+
 
     def make_HTTP_request(self):
         params = {
@@ -87,10 +89,13 @@ class Torrent:
                             self.peer_id,
                             self.tracker.info_hash,
                             self.filewriter,
+                            self,
+                            self.verbose, # flag to allow stacktrace printing
                         )
                         self.peer_list.append(peer)  # add the peers to the list
                     except:
-                        traceback.print_exc()
+                        if self.verbose:
+                            traceback.print_exc()
             else:
                 peers_list = tracker_data.get(b"peers", [])
                 for peer_dict in peers_list:
@@ -105,6 +110,26 @@ class Torrent:
                         self.filewriter,
                     )
                     self.peer_list.append(peer)
+                    
+    
+    async def initiate_download(self):
+        async with self.peer_list_lock:
+            await asyncio.gather(
+                *(peer.send_handshake() for peer in self.peer_list)
+            )
+        
+        
+    async def refresh_peers(self):
+        while True:
+            pretty_print("refresing peers", "cyan")
+            async with self.peer_list_lock:
+                self.peer_list = []
+                self.ping_tracker()
+            await asyncio.sleep(self.interval)
 
     async def start_connections(self):
-        await asyncio.gather(*(peer.send_handshake() for peer in self.peer_list))
+        # append tasks here to run them concurrently
+        await asyncio.gather(
+            self.initiate_download(), # task 1
+            self.refresh_peers() # task 2
+        )
