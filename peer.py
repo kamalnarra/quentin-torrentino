@@ -37,6 +37,8 @@ class PeerConnection:
         self.verbose = verbose # if you want to allow stacktrace printing
         self.start_time = time.time()  # record the start time of the download
         self.total_pieces = download_handler.tracker.num_pieces  # total number of pieces
+        self.download_handler_lock = asyncio.Lock()
+        self.filewriter_lock = asyncio.Lock()
 
     def make_handshake(self):
         return struct.pack(
@@ -54,6 +56,9 @@ class PeerConnection:
             self.reader, self.writer = await asyncio.open_connection(
                 self.peer_ip, self.peer_port
             )
+            # set timeout
+            self.writer.get_extra_info("socket").settimeout(5)
+            
             self.writer.write(self.make_handshake())
             print(f"[{self.peer_ip}]: SENT HANDSHAKE")
             await self.writer.drain()
@@ -75,6 +80,7 @@ class PeerConnection:
             pretty_print("===Lost peer!===", "red")
             if self.pending_piece:
                 self.download_handler.pending_pieces.append(self.pending_piece)
+                    
 
     async def validate_handshake(self):
         recv_data = await self.reader.readexactly(68)
@@ -87,6 +93,7 @@ class PeerConnection:
       
     def calculate_time_since_download_started(self):
         # time stuff
+        
         completed_pieces = len(self.download_handler.finished_pieces)
         percent_complete = round(completed_pieces * 100 / self.total_pieces)
 
@@ -109,14 +116,15 @@ class PeerConnection:
 
     async def send_request(self):
         if self.pending_piece is None:
-            self.pending_piece = self.download_handler.next(self.pieces)
-            if self.pending_piece is None:
-                return
+            async with self.download_handler_lock:
+                self.pending_piece = self.download_handler.next(self.pieces)
+                if self.pending_piece is None:
+                    return
         length = self.pending_piece.next_block_length()
         if length is None:
             self.download_handler.finished_pieces.append(self.pending_piece)
-            
-            
+                
+                
             # time stuff
             percent_complete, estimated_remaining_time = self.calculate_time_since_download_started()
 
@@ -139,6 +147,7 @@ class PeerConnection:
                 length,
             )
         )
+                
         await self.writer.drain()
 
     async def manage_peers(self):
@@ -179,8 +188,9 @@ class PeerConnection:
                 print(f"[{self.peer_ip}]: HAVE piece index: {piece_index}")
                 piece_index_data = await self.reader.readexactly(4)
                 piece_index = struct.unpack(">I", piece_index_data)[0]
-                self.download_handler.handle_have(piece_index)
-                self.pieces.add(piece_index)
+                async with self.download_handler_lock:
+                    self.download_handler.handle_have(piece_index)
+                    self.pieces.add(piece_index)
 
             elif id == BITFIELD:
                 bitfield = await self.reader.readexactly(length - 1)
@@ -188,8 +198,9 @@ class PeerConnection:
                     for bit in range(8):
                         piece_index = index * 8 + bit
                         if (byte >> (7 - bit)) & 1:  # if bit is set
-                            self.download_handler.handle_have(piece_index)
-                            self.pieces.add(piece_index)
+                            async with self.download_handler_lock:
+                                self.download_handler.handle_have(piece_index)
+                                self.pieces.add(piece_index)
                         if piece_index >= len(self.download_handler.needed_pieces):
                             break
 
@@ -201,9 +212,10 @@ class PeerConnection:
                 block_offset_data = await self.reader.readexactly(4)
                 block_offset = struct.unpack(">I", block_offset_data)[0]
                 block_data = await self.reader.readexactly(length - 9)
-                self.filewriter.write_block(piece_index, block_offset, block_data)
-                self.pending_piece.offset = block_offset + length - 9
-                await self.send_request()
+                async with self.filewriter_lock:
+                    self.filewriter.write_block(piece_index, block_offset, block_data)
+                    self.pending_piece.offset = block_offset + length - 9
+                    await self.send_request()
             elif id == CANCEL:
                 print(f"[{self.peer_ip}]: CANCEL")
             else:

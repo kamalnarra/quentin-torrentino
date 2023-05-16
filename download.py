@@ -13,7 +13,7 @@ class DownloadHandler:
         self.needed_pieces = []
         self.pending_pieces = []
         self.finished_pieces = []
-        self.file_writer = FileWriter(self.tracker.name, self.tracker.length)
+        self.file_writer = FileWriter(self.tracker.name, self.tracker.length, self.tracker.piece_length, BLOCK_LENGTH)
         self.torrent = torrent
         self.start_time = time.time()  # record the start time of the download
         self.total_size = torrent.filewriter.total_size  # total file size
@@ -85,8 +85,9 @@ class Piece:
         self.length = length
         self.num_blocks = num_blocks
 
+   
     def next_block_length(self):
-        if self.offset + BLOCK_LENGTH <= self.num_blocks * BLOCK_LENGTH:
+        if self.offset + BLOCK_LENGTH <= self.length:
             return BLOCK_LENGTH
         elif self.length - self.offset > 0:
             return self.length - self.offset
@@ -95,13 +96,18 @@ class Piece:
 
 
 class FileWriter:
-    def __init__(self, filename, total_size):
+    def __init__(self, filename, total_size, piece_length, block_length):
+        # self.filename = filename
+        # self.total_size = total_size
+        # self.file = open(filename, "wb")
         self.filename = filename
         self.total_size = total_size
+        self.piece_length = piece_length
+        self.block_length = block_length
         self.file = open(filename, "wb")
 
     def write_block(self, piece_index, block_index, block_data):
-        position = piece_index * self.total_size + block_index
+        position = piece_index * self.piece_length + block_index * self.block_length
         self.file.seek(position)
         self.file.write(block_data)
         self.file.flush()

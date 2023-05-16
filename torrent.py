@@ -6,7 +6,7 @@ from bencodepy import decode
 import struct
 import urllib.parse
 import asyncio
-from download import DownloadHandler, FileWriter
+from download import DownloadHandler, FileWriter, BLOCK_LENGTH
 import traceback
 from utils import pretty_print
 
@@ -29,7 +29,9 @@ class Torrent:
         self.peer_list_lock = asyncio.Lock()
         self.tracker = Tracker(path, self)
         self.filewriter = FileWriter(
-            self.tracker.name, self.tracker.piece_length)
+            self.tracker.name, self.tracker.piece_length,
+            self.tracker.piece_length, BLOCK_LENGTH
+        )
         self.download_handler = DownloadHandler(self.tracker, self)
         self.left = self.tracker.length  # bytes left before fiel is complete
         self.ping_tracker()  # interval and peer list are updated
