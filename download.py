@@ -2,17 +2,21 @@ import math
 import heapq
 import hashlib
 import random
-
+from utils import pretty_print
+import time
 BLOCK_LENGTH = 2**14
 
 
 class DownloadHandler:
-    def __init__(self, tracker):
+    def __init__(self, tracker, torrent):
         self.tracker = tracker
         self.needed_pieces = []
         self.pending_pieces = []
         self.finished_pieces = []
         self.file_writer = FileWriter(self.tracker.name, self.tracker.length)
+        self.torrent = torrent
+        self.start_time = time.time()  # record the start time of the download
+        self.total_size = torrent.filewriter.total_size  # total file size
         self.init_pieces()
 
     def init_pieces(self):
@@ -41,12 +45,28 @@ class DownloadHandler:
             l = [x for x in self.needed_pieces if x.index == piece_index]
             if len(l):
                 l[0][1] += 1
+                
+    # for avg download speed
+    def format_size(self, size):
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        unit = 0
+        while size >= 1024:
+            size /= 1024
+            unit += 1
+        return f"{size:.2f}{units[unit]}"
+    
+    def get_avg_speed(self):
+        elapsed_time = time.time() - self.start_time  # total time taken
+        average_speed = self.total_size / elapsed_time  # calculate average speed in bytes/second
+        return average_speed
 
     def next(self, pieces):
         if len(self.pending_pieces):
             return self.pending_pieces.pop(0)
         if len(self.needed_pieces) == 0:
-            print("DOWNLOAD FINISHED 🥳🥳🥳")
+            avg_speed = self.get_avg_speed()
+            pretty_print("DOWNLOAD FINISHED 🥳🥳🥳", "green")
+            pretty_print(f"Average download speed: {self.format_size(avg_speed)}/s", "green")
             return None
         filtered = [x for x in self.needed_pieces if x[0].index in pieces]
         if len(filtered) == 0:

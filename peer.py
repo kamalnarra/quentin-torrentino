@@ -3,8 +3,9 @@ import selectors
 import socket
 import struct
 import traceback
-
+from utils import pretty_print
 from download import FileWriter
+import time
 
 CHOKE = 0
 UNCHOKE = 1
@@ -18,8 +19,9 @@ CANCEL = 8
 PORT = 9
 
 class PeerConnection:
-    def __init__(self, download_handler, ip, port, peer_id, info_hash, filewriter):
+    def __init__(self, download_handler, ip, port, peer_id, info_hash, filewriter, torrent, verbose=True):
         self.filewriter = filewriter
+        self.torrent = torrent
         self.download_handler = download_handler
         self.pieces = set()
         self.pending_piece = None
@@ -31,6 +33,10 @@ class PeerConnection:
         self.interested = False
         self.reader = None
         self.writer = None
+        self.connection_try = 0 # number of times we tried to connect to this peer
+        self.verbose = verbose # if you want to allow stacktrace printing
+        self.start_time = time.time()  # record the start time of the download
+        self.total_pieces = download_handler.tracker.num_pieces  # total number of pieces
 
     def make_handshake(self):
         return struct.pack(
@@ -44,6 +50,7 @@ class PeerConnection:
 
     async def send_handshake(self):
         try:
+            self.connection_try += 1 # increment the number of times we tried to connect to this peer
             self.reader, self.writer = await asyncio.open_connection(
                 self.peer_ip, self.peer_port
             )
@@ -51,11 +58,21 @@ class PeerConnection:
             print(f"[{self.peer_ip}]: SENT HANDSHAKE")
             await self.writer.drain()
             await self.validate_handshake()
-        except:
+        except ConnectionRefusedError:
+            pretty_print(f"[{self.peer_ip}]: CONNECTION REFUSED. TRYING AGAIN.", "yellow")
+            pretty_print(f"[{self.peer_ip}]: CONNECTION ATTEMPT {self.connection_try}", "magenta")
+            if self.connection_try < 5: # try to connect 5 times
+                await self.send_handshake()
+            else:
+                pretty_print(f"[{self.peer_ip}]: CONNECTION FAILED. REMOVING FROM PEER LIST", "red")
+                self.torrent.peer_list.remove(self)
+                return
+        except Exception as e:
             if self.writer:
                 self.writer.close()
-            traceback.print_exc()
-            print("===Lost peer!===")
+            if self.verbose:
+                traceback.print_exc()
+            pretty_print("===Lost peer!===", "red")
             if self.pending_piece:
                 self.download_handler.pending_pieces.append(self.pending_piece)
 
@@ -67,6 +84,28 @@ class PeerConnection:
             await self.manage_peers()
         else:
             raise Exception("The hashes did not match")
+      
+    def calculate_time_since_download_started(self):
+        # time stuff
+        completed_pieces = len(self.download_handler.finished_pieces)
+        percent_complete = round(completed_pieces * 100 / self.total_pieces)
+
+        elapsed_time = time.time() - self.start_time  # total time taken so far
+        estimated_total_time = elapsed_time * self.total_pieces / completed_pieces  # estimate total time
+        estimated_remaining_time = estimated_total_time - elapsed_time  # estimate remaining time
+        return percent_complete, estimated_remaining_time
+        
+        
+    # Converts time in seconds to a more human-readable format.  
+    def format_time(self, seconds):
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+        elif minutes > 0:
+            return f"{int(minutes)}m {int(seconds)}s"
+        else:
+            return f"{seconds:.2f}s"
 
     async def send_request(self):
         if self.pending_piece is None:
@@ -76,9 +115,16 @@ class PeerConnection:
         length = self.pending_piece.next_block_length()
         if length is None:
             self.download_handler.finished_pieces.append(self.pending_piece)
-            print(
-                f"[{self.peer_ip}] {round(len(self.download_handler.finished_pieces) * 100 / self.download_handler.tracker.num_pieces)}%"
+            
+            
+            # time stuff
+            percent_complete, estimated_remaining_time = self.calculate_time_since_download_started()
+
+            pretty_print(
+                f"[{self.peer_ip}] {percent_complete}% complete, "
+                f"Estimated remaining time: {self.format_time(estimated_remaining_time)}", "yellow"
             )
+            
             self.pending_piece = self.download_handler.next(self.pieces)
             if self.pending_piece is None:
                 return
