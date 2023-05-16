@@ -64,28 +64,50 @@ class Torrent:
 
     def ping_tracker(self):
         tracker_data = self.tracker
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.connect((tracker_data.announce_host,
-                         tracker_data.announce_port))
-            request = self.make_HTTP_request()
-            sock.sendall(request.encode("utf-8"))
-            response = b""
-            while True:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                response += chunk
-            _, payload = response.split(b"\r\n\r\n", 1)
-            tracker_data = decode(payload)
-            self.interval = tracker_data.get(b"interval", 0)
-            if type(tracker_data.get(b"peers")) == bytes:
-                peers_raw = tracker_data.get(b"peers", b"")
-                for i in range(
-                    0, len(peers_raw), 6
-                ):  # iterate through the values in peers_raw
-                    try:
-                        ip = socket.inet_ntoa(peers_raw[i: i + 4])
-                        port = struct.unpack(">H", peers_raw[i + 4: i + 6])[0]
+        url_parts = urllib.parse.urlparse(self.tracker.announce)
+        if url_parts.scheme == 'http':
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect((tracker_data.announce_host,
+                            tracker_data.announce_port))
+                request = self.make_HTTP_request()
+                sock.sendall(request.encode("utf-8"))
+                response = b""
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    response += chunk
+                _, payload = response.split(b"\r\n\r\n", 1)
+                tracker_data = decode(payload)
+                self.interval = tracker_data.get(b"interval", 0)
+                if type(tracker_data.get(b"peers")) == bytes:
+                    peers_raw = tracker_data.get(b"peers", b"")
+                    for i in range(
+                        0, len(peers_raw), 6
+                    ):  # iterate through the values in peers_raw
+                        try:
+                            ip = socket.inet_ntoa(peers_raw[i: i + 4])
+                            port = struct.unpack(">H", peers_raw[i + 4: i + 6])[0]
+                            peer = PeerConnection(  # create a new connection for each peer
+                                self.download_handler,
+                                ip,
+                                port,
+                                self.peer_id,
+                                self.tracker.info_hash,
+                                self.filewriter,
+                                self,
+                                self.verbose,  # flag to allow stacktrace printing
+                            )
+                            # add the peers to the list
+                            self.peer_list.append(peer)
+                        except:
+                            if self.verbose:
+                                traceback.print_exc()
+                else:
+                    peers_list = tracker_data.get(b"peers", [])
+                    for peer_dict in peers_list:
+                        ip = peer_dict[b"ip"]
+                        port = peer_dict[b"port"]
                         peer = PeerConnection(  # create a new connection for each peer
                             self.download_handler,
                             ip,
@@ -96,27 +118,7 @@ class Torrent:
                             self,
                             self.verbose,  # flag to allow stacktrace printing
                         )
-                        # add the peers to the list
                         self.peer_list.append(peer)
-                    except:
-                        if self.verbose:
-                            traceback.print_exc()
-            else:
-                peers_list = tracker_data.get(b"peers", [])
-                for peer_dict in peers_list:
-                    ip = peer_dict[b"ip"]
-                    port = peer_dict[b"port"]
-                    peer = PeerConnection(  # create a new connection for each peer
-                        self.download_handler,
-                        ip,
-                        port,
-                        self.peer_id,
-                        self.tracker.info_hash,
-                        self.filewriter,
-                        self,
-                        self.verbose,  # flag to allow stacktrace printing
-                    )
-                    self.peer_list.append(peer)
 
     async def initiate_download(self):
         async with self.peer_list_lock:
