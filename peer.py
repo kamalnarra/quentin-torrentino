@@ -23,7 +23,7 @@ class PeerConnection:
         self.filewriter = filewriter
         self.torrent = torrent
         self.download_handler = download_handler
-        self.pieces = set()
+        self.pieces = set() # this is the set of pieces that the peer has. 
         self.pending_piece = None
         self.peer_ip = ip
         self.peer_port = port
@@ -94,7 +94,8 @@ class PeerConnection:
         estimated_total_time = elapsed_time * self.total_pieces / completed_pieces  # estimate total time
         estimated_remaining_time = estimated_total_time - elapsed_time  # estimate remaining time
         return percent_complete, estimated_remaining_time
-           
+        
+        
     # Converts time in seconds to a more human-readable format.  
     def format_time(self, seconds):
         minutes, seconds = divmod(seconds, 60)
@@ -106,19 +107,12 @@ class PeerConnection:
         else:
             return f"{seconds:.2f}s"
 
-    # what this does is it sends a request to the peer for a piece
     async def send_request(self):
-        # if we don't have a pending piece, get the next one
         if self.pending_piece is None:
-            # get the next piece
             self.pending_piece = self.download_handler.next(self.pieces)
-            # if there are no more pieces, return
             if self.pending_piece is None:
                 return
-        # get the length of the next block
         length = self.pending_piece.next_block_length()
-        
-        # if the length is None, that means we have finished downloading the piece
         if length is None:
             self.download_handler.finished_pieces.append(self.pending_piece)
             
@@ -135,16 +129,16 @@ class PeerConnection:
             if self.pending_piece is None:
                 return
             length = self.pending_piece.next_block_length()
-            self.writer.write(
-                struct.pack(
-                    ">IbIII",
-                    13,
-                    REQUEST,
-                    self.pending_piece.index,
-                    self.pending_piece.offset,
-                    length,
-                )
+        self.writer.write(
+            struct.pack(
+                ">IbIII",
+                13,
+                REQUEST,
+                self.pending_piece.index,
+                self.pending_piece.offset,
+                length,
             )
+        )
         await self.writer.drain()
 
     async def manage_peers(self):
@@ -188,7 +182,6 @@ class PeerConnection:
                 self.download_handler.handle_have(piece_index)
                 self.pieces.add(piece_index)
 
-            
             elif id == BITFIELD:
                 bitfield = await self.reader.readexactly(length - 1)
                 for index, byte in enumerate(bitfield):
@@ -203,21 +196,13 @@ class PeerConnection:
             elif id == REQUEST:
                 print(f"[{self.peer_ip}]: REQUEST")
             elif id == PIECE:
-                # first step is to read the piece index
                 piece_index_data = await self.reader.readexactly(4)
-                # unpack the piece index
                 piece_index = struct.unpack(">I", piece_index_data)[0]
-                # read the block offset
                 block_offset_data = await self.reader.readexactly(4)
-                # unpack the block offset
                 block_offset = struct.unpack(">I", block_offset_data)[0]
-                # read the block data
                 block_data = await self.reader.readexactly(length - 9)
-                # write the block data to the file
                 self.filewriter.write_block(piece_index, block_offset, block_data)
-                # update the pending piece
                 self.pending_piece.offset = block_offset + length - 9
-                
                 await self.send_request()
             elif id == CANCEL:
                 print(f"[{self.peer_ip}]: CANCEL")

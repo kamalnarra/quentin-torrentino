@@ -28,9 +28,12 @@ class Torrent:
         # prevents race conditions when updating peer list
         self.peer_list_lock = asyncio.Lock()
         self.tracker = Tracker(path, self)
-        self.filewriter = FileWriter(
-            self.tracker.name, self.tracker.piece_length)
+        
         self.download_handler = DownloadHandler(self.tracker, self)
+        self.filewriter = FileWriter(
+            self.tracker.name, self.tracker.piece_length, self.download_handler)
+        self.download_handler.filewriter = self.filewriter
+        self.download_handler.total_size = self.download_handler.filewriter.total_size
         self.left = self.tracker.length  # bytes left before fiel is complete
         self.ping_tracker()  # interval and peer list are updated
 

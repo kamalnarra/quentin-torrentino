@@ -7,17 +7,19 @@ import time
 BLOCK_LENGTH = 2**14
 
 
+
 class DownloadHandler:
     def __init__(self, tracker, torrent):
         self.tracker = tracker
         self.needed_pieces = []
         self.pending_pieces = []
         self.finished_pieces = []
-        self.file_writer = FileWriter(self.tracker.name, self.tracker.length)
+        self.file_writer =None
         self.torrent = torrent
         self.start_time = time.time()  # record the start time of the download
-        self.total_size = torrent.filewriter.total_size  # total file size
+        self.total_size = 0 # total file size
         self.init_pieces()
+        
 
     def init_pieces(self):
         piece_length = self.tracker.piece_length
@@ -41,8 +43,13 @@ class DownloadHandler:
         random.shuffle(self.needed_pieces)
         
     def get_finished_piece(self, piece_index):
+        pretty_print("Getting finished piece", "magenta")
+        # pretty_print(f"{self.finished_pieces}", "magenta")
         for piece in self.finished_pieces:
-            if piece.index == piece_index:
+            pretty_print(f"{piece.index}", "magenta")
+        pretty_print(f"{piece_index}", "yellow")
+        for piece in self.finished_pieces:
+            if piece.index == piece_index - 1:
                 return piece
         return None
 
@@ -110,6 +117,7 @@ class Piece:
         self.length = length
         self.num_blocks = num_blocks
         self.blocks = []
+        self.blocks_so_far = 0
 
     def next_block_length(self):
         # what this does is that it returns the length of the next block
@@ -127,9 +135,10 @@ class Piece:
 
 
 class FileWriter:
-    def __init__(self, filename, total_size):
+    def __init__(self, filename, total_size, download_handler):
         self.filename = filename
         self.total_size = total_size
+        self.download_handler = download_handler
         self.file = open(filename, "wb")
         
         # self.data below is a 2d file that stores the data of each pice
@@ -137,6 +146,8 @@ class FileWriter:
         self.data = []
 
     def write_block(self, piece_index, block_index, block_data):
+        current_piece = self.download_handler.get_finished_piece(piece_index)
+        pretty_print(f"at {current_piece}", "green")
         # calculate the position of the block in the file
         position = piece_index * self.total_size + block_index
         # seek to the position and write the data
