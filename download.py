@@ -39,10 +39,21 @@ class DownloadHandler:
                 )
             self.needed_pieces.append([piece, 0])
         random.shuffle(self.needed_pieces)
+        
+    def get_finished_piece(self, piece_index):
+        for piece in self.finished_pieces:
+            if piece.index == piece_index:
+                return piece
+        return None
+
 
     def handle_have(self, piece_index):
+        # if we don't have the piece, add it to the needed pieces
+        # if we have the piece, increment the number of peers that have the piece
         if piece_index < self.tracker.num_pieces:
+            # check if we have the piece
             l = [x for x in self.needed_pieces if x.index == piece_index]
+            # if we don't have the piece, add it to the needed pieces
             if len(l):
                 l[0][1] += 1
                 
@@ -60,19 +71,33 @@ class DownloadHandler:
         average_speed = self.total_size / elapsed_time  # calculate average speed in bytes/second
         return average_speed
 
+    # what this function does is that it takes 
+    # a piece and a block index and returns the block data
     def next(self, pieces):
+        # if there are pending pieces, return the first one
         if len(self.pending_pieces):
+            # return the first pending piece
             return self.pending_pieces.pop(0)
+        # if there are no pending pieces, check if there are any needed pieces
         if len(self.needed_pieces) == 0:
             avg_speed = self.get_avg_speed()
             pretty_print("DOWNLOAD FINISHED 🥳🥳🥳", "green")
             pretty_print(f"Average download speed: {self.format_size(avg_speed)}/s", "green")
+            
+            
+            
+                
             return None
+        # if there are needed pieces, check if any of them are in the pieces list
         filtered = [x for x in self.needed_pieces if x[0].index in pieces]
+        # if there are no pieces in the pieces list, return None
         if len(filtered) == 0:
             return None
+        # if there are pieces in the pieces list, return the first one
         top = min(filtered, key=lambda x: x[1])
+        # if the piece is not downloaded, return the piece
         self.needed_pieces.remove(top)
+        # if the piece is downloaded, return None
         return top[0]
 
 
@@ -84,14 +109,21 @@ class Piece:
         self.hash = hash
         self.length = length
         self.num_blocks = num_blocks
+        self.blocks = []
 
     def next_block_length(self):
+        # what this does is that it returns the length of the next block
         if self.offset + BLOCK_LENGTH <= self.num_blocks * BLOCK_LENGTH:
             return BLOCK_LENGTH
+        # if the next block is the last block, return the length of the last block
         elif self.length - self.offset > 0:
             return self.length - self.offset
+        # if the piece is downloaded, return None
         else:
+            pretty_print("Piece downloaded", "green")
             return None
+        
+ 
 
 
 class FileWriter:
@@ -99,12 +131,21 @@ class FileWriter:
         self.filename = filename
         self.total_size = total_size
         self.file = open(filename, "wb")
+        
+        # self.data below is a 2d file that stores the data of each pice
+        # each containing a list of blocks
+        self.data = []
 
     def write_block(self, piece_index, block_index, block_data):
+        # calculate the position of the block in the file
         position = piece_index * self.total_size + block_index
+        # seek to the position and write the data
         self.file.seek(position)
+        # write the data
         self.file.write(block_data)
+        # flush the data to the file
         self.file.flush()
-
+        
+    
     def close(self):
         self.file.close()
