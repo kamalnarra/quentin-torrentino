@@ -145,6 +145,7 @@ class PeerConnection:
         x = 0
         while True:
             data = await self.reader.readexactly(4)
+            
             try:
                 (length,) = struct.unpack(">I", data)
             except:
@@ -154,6 +155,8 @@ class PeerConnection:
                 return
             data = await self.reader.readexactly(1)
             (id,) = struct.unpack(">B", data)
+            pretty_print(f"[{self.peer_ip}]: RECEIVED MESSAGE ID: {id}", "green")
+            
             if id == CHOKE:
                 print(f"[{self.peer_ip}]: CHOKE")
                 self.choked = True
@@ -190,7 +193,7 @@ class PeerConnection:
                         if (byte >> (7 - bit)) & 1:  # if bit is set
                             self.download_handler.handle_have(piece_index)
                             self.pieces.add(piece_index)
-                        if piece_index >= len(self.download_handler.needed_pieces):
+                        if piece_index >= len(self.download_handler.needed_pieces): # if we have all the pieces
                             break
 
             elif id == REQUEST:

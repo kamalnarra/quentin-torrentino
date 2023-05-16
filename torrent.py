@@ -9,10 +9,10 @@ import asyncio
 from download import DownloadHandler, FileWriter
 import traceback
 from utils import pretty_print
-
+from seeder import Seeder
 
 class Torrent:
-    def __init__(self, path, verbose=True, port=6881, compact=0, max_connections=50):
+    def __init__(self, path, verbose=True, port=6881, compact=0, max_connections=50, preferred_file_name = None):
         self.peer_id = "-WC0001-" + "".join(
             [str(random.randint(0, 9)) for _ in range(12)]
         )
@@ -22,6 +22,7 @@ class Torrent:
         self.downloaded = 0  # bytes downloaded
         self.event = "started"  # auto-set to started and will be updated over time
         self.interval = 0
+        self.complete = False # used for seeding
         self.peer_list = []  # empty to start
         self.max_connections = max_connections
         self.verbose = verbose  # if you want to allow stacktrace printing
@@ -29,7 +30,7 @@ class Torrent:
         self.peer_list_lock = asyncio.Lock()
         self.tracker = Tracker(path, self)
         self.filewriter = FileWriter(
-            self.tracker.name, self.tracker.piece_length)
+            preferred_file_name or self.tracker.name, self)
         self.download_handler = DownloadHandler(self.tracker, self)
         self.left = self.tracker.length  # bytes left before fiel is complete
         self.ping_tracker()  # interval and peer list are updated
@@ -128,13 +129,49 @@ class Torrent:
         while True:
             pretty_print("refresing peers", "cyan")
             async with self.peer_list_lock:
-                self.peer_list = []
+                # self.peer_list = []
                 self.ping_tracker()
             await asyncio.sleep(self.interval)
+            
+    # ip addr of the seeder is 0.0.0.0
+    # port is 6886
+    # put these as cli args
+    async def seed(self):
+        pretty_print("starting seeding", "cyan")
+        server = Seeder('0.0.0.0', 6886, self.peer_id,  self.tracker.info_hash, self.filewriter, self)
+        await server.start()
 
-    async def start_connections(self):
+    # the program only starts seeding five seconds 
+    # after the download is complete
+    async def start_seeding(self):
+        while True:
+            await asyncio.sleep(5)
+            if self.complete == True:
+                await asyncio.gather(
+                    self.seed(),
+                )
+    
+
+
+    async def start_connections(self, preferred_peer_list=None):
+        self.peer_list = preferred_peer_list or self.peer_list
         # append tasks here to run them concurrently
         await asyncio.gather(
             self.initiate_download(),  # task 1
-            self.refresh_peers()  # task 2
+            self.start_seeding()
         )
+        
+        await asyncio.gather(
+            # self.initiate_download(),  # task 1
+            self.refresh_peers(),  # task 2
+            # self.start_seeding()
+        )
+
+
+    
+    
+    
+    
+    
+    
+  

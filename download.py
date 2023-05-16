@@ -13,10 +13,9 @@ class DownloadHandler:
         self.needed_pieces = []
         self.pending_pieces = []
         self.finished_pieces = []
-        self.file_writer = FileWriter(self.tracker.name, self.tracker.length)
         self.torrent = torrent
         self.start_time = time.time()  # record the start time of the download
-        self.total_size = torrent.filewriter.total_size  # total file size
+        self.total_size = torrent.tracker.length # total file size
         self.init_pieces()
 
     def init_pieces(self):
@@ -67,6 +66,7 @@ class DownloadHandler:
             avg_speed = self.get_avg_speed()
             pretty_print("DOWNLOAD FINISHED 🥳🥳🥳", "green")
             pretty_print(f"Average download speed: {self.format_size(avg_speed)}/s", "green")
+            self.torrent.complete = True
             return None
         filtered = [x for x in self.needed_pieces if x[0].index in pieces]
         if len(filtered) == 0:
@@ -95,16 +95,44 @@ class Piece:
 
 
 class FileWriter:
-    def __init__(self, filename, total_size):
+    def __init__(self, filename, torrent):
         self.filename = filename
-        self.total_size = total_size
+        pretty_print(f"NAME OF FILE: {filename}", "green")
+
+        self.total_size = torrent.tracker.length
+        self.piece_length = torrent.tracker.piece_length
         self.file = open(filename, "wb")
+        self.torrent = torrent
+        self.pieces = [False for _ in range(-(-self.total_size // self.piece_length))]  # ceil division
+                                                         # total_size // piece_length
 
     def write_block(self, piece_index, block_index, block_data):
-        position = piece_index * self.total_size + block_index
+        position = piece_index * self.piece_length + block_index
         self.file.seek(position)
         self.file.write(block_data)
         self.file.flush()
+        self.pieces[piece_index] = True  # mark piece as downloaded
+        
+    def read_piece(self, index, begin, length):
+        # Open the file in binary mode
+        with open(self.filename, 'rb') as file:
+            # Seek to the correct position in the file
+            file.seek(index * self.piece_length + begin)
+
+            # Read the requested data
+            piece_data = file.read(length)
+
+        return piece_data
+    
+    def get_bitfield(self):
+        bitfield = bytearray()
+        for i in range(0, len(self.pieces), 8):
+            byte = 0
+            for j in range(8):
+                if i + j < len(self.pieces) and self.pieces[i + j]:
+                    byte |= 1 << (7 - j)
+            bitfield.append(byte)
+        return bytes(bitfield)
 
     def close(self):
         self.file.close()
