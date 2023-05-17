@@ -4,6 +4,8 @@ import hashlib
 import random
 from utils import pretty_print
 import time
+import asyncio
+
 BLOCK_LENGTH = 2**14
 
 
@@ -13,11 +15,12 @@ class DownloadHandler:
         self.needed_pieces = []
         self.pending_pieces = []
         self.finished_pieces = []
-        self.file_writer = FileWriter(self.tracker.name, self.tracker.length)
         self.torrent = torrent
         self.start_time = time.time()  # record the start time of the download
-        self.total_size = torrent.filewriter.total_size  # total file size
+        self.total_size = torrent.tracker.length  # total file size
         self.init_pieces()
+
+    # function below verifies that each piece's hash matches the hash in the torrent file
 
     def init_pieces(self):
         piece_length = self.tracker.piece_length
@@ -42,38 +45,55 @@ class DownloadHandler:
 
     def handle_have(self, piece_index):
         if piece_index < self.tracker.num_pieces:
-            l = [x for x in self.needed_pieces if x.index == piece_index]
+            l = [x for x in self.needed_pieces if x[0].index == piece_index]
             if len(l):
                 l[0][1] += 1
-                
+
     # for avg download speed
     def format_size(self, size):
-        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        units = ["B", "KB", "MB", "GB", "TB"]
         unit = 0
         while size >= 1024:
             size /= 1024
             unit += 1
         return f"{size:.2f}{units[unit]}"
-    
+
     def get_avg_speed(self):
         elapsed_time = time.time() - self.start_time  # total time taken
-        average_speed = self.total_size / elapsed_time  # calculate average speed in bytes/second
+        average_speed = (
+            self.total_size / elapsed_time
+        )  # calculate average speed in bytes/second
         return average_speed
 
     def next(self, pieces):
         if len(self.pending_pieces):
             return self.pending_pieces.pop(0)
-        if len(self.needed_pieces) == 0:
-            avg_speed = self.get_avg_speed()
-            pretty_print("DOWNLOAD FINISHED 🥳🥳🥳", "green")
-            pretty_print(f"Average download speed: {self.format_size(avg_speed)}/s", "green")
-            return None
         filtered = [x for x in self.needed_pieces if x[0].index in pieces]
         if len(filtered) == 0:
             return None
-        top = min(filtered, key=lambda x: x[1])
+        top = min(filtered, key=lambda x: x[1])  # pick highest rarity
         self.needed_pieces.remove(top)
         return top[0]
+
+    def check_done(self):
+        if (
+            len(self.pending_pieces)
+            or len(self.needed_pieces)
+            or len([x for x in self.torrent.peer_list if x.waiting])
+        ):
+            return
+
+        avg_speed = self.get_avg_speed()
+        pretty_print("DOWNLOAD FINISHED 🥳🥳🥳", "green")
+
+        # TODO: once it is fully downloaded we then
+        # check compare each piece's hash to the hash in the torrent file
+        # if they match, then the file is downloaded correctly
+
+        self.torrent.filewriter.file.close()
+        pretty_print(
+            f"Average download speed: {self.format_size(avg_speed)}/s", "green"
+        )
 
 
 class Piece:
@@ -82,6 +102,7 @@ class Piece:
         self.index = index
         self.offset = 0
         self.hash = hash
+        self.actual_hash = hashlib.sha1()
         self.length = length
         self.num_blocks = num_blocks
 
@@ -95,16 +116,46 @@ class Piece:
 
 
 class FileWriter:
-    def __init__(self, filename, total_size):
+    def __init__(self, filename, torrent):
         self.filename = filename
-        self.total_size = total_size
+        pretty_print(f"NAME OF FILE: {filename}", "green")
+
+        self.total_size = torrent.tracker.length
+        self.piece_length = torrent.tracker.piece_length
         self.file = open(filename, "wb")
+        self.torrent = torrent
+        self.pieces = [
+            False for _ in range(-(-self.total_size // self.piece_length))
+        ]  # ceil division
+        # total_size // piece_length
 
     def write_block(self, piece_index, block_index, block_data):
-        position = piece_index * self.total_size + block_index
+        position = piece_index * self.piece_length + block_index
         self.file.seek(position)
         self.file.write(block_data)
-        self.file.flush()
+        self.pieces[piece_index] = True  # mark piece as downloaded
+
+    def read_piece(self, index, begin, length):
+        # Open the file in binary mode
+        with open(self.filename, 'rb') as file:
+            # Seek to the correct position in the file
+            file.seek(index * self.piece_length + begin)
+
+            # Read the requested data
+            piece_data = file.read(length)
+
+        return piece_data
+    
+
+    def get_bitfield(self):
+        bitfield = bytearray()
+        for i in range(0, len(self.pieces), 8):
+            byte = 0
+            for j in range(8):
+                if i + j < len(self.pieces) and self.pieces[i + j]:
+                    byte |= 1 << (7 - j)
+            bitfield.append(byte)
+        return bytes(bitfield)
 
     def close(self):
         self.file.close()
