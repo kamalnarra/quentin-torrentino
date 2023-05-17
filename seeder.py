@@ -13,6 +13,7 @@ PIECE = 7
 CANCEL = 8
 PORT = 9
 
+
 class Seeder:
     def __init__(self, host, port, peer_id, info_hash, filewriter, torrent):
         self.host = host
@@ -23,43 +24,43 @@ class Seeder:
         self.torrent = torrent
         self.server = None
 
-
     async def start(self):
         self.server = await asyncio.start_server(
-            self.handle_peer_connection, self.host, self.port)
+            self.handle_peer_connection, self.host, self.port
+        )
 
         addr = self.server.sockets[0].getsockname()
-        print(f'Seeding on {addr}')
+        print(f"Seeding on {addr}")
 
         async with self.server:
             await self.server.serve_forever()
-            
+
     async def send_bitfield(self, writer):
         bitfield = self.filewriter.get_bitfield()
-        pretty_print(f"Sending bitfield: {bitfield}", "green")
-        pretty_print(f"Sending bitfield length: {len(bitfield) + 1}", "green")
+        
         message = struct.pack(">Ib", len(bitfield) + 1, BITFIELD) + bitfield
         writer.write(message)
-        pretty_print(f"SENT", "green")
         await writer.drain()
 
     async def handle_peer_connection(self, reader, writer):
-        addr = writer.get_extra_info('peername')
-        print(f'Accepted connection from {addr}')
+        addr = writer.get_extra_info("peername")
+        print(f"Accepted connection from {addr}")
 
         # Handle handshake
         handshake = await reader.read(68)
         if not self.is_valid_handshake(handshake):
-            print(f'Invalid handshake from {addr}')
+            print(f"Invalid handshake from {addr}")
             writer.close()
             return
-        
+        else:
+            pretty_print(f"Valid handshake from {addr}", "green")
+
         # send handshake
         writer.write(handshake)
-        
+
         # send bitfield
         await self.send_bitfield(writer)
-        
+
         # send UNCHOKE
         writer.write(struct.pack(">IB", 1, UNCHOKE))
 
@@ -79,29 +80,32 @@ class Seeder:
                 await self.send_piece(writer, index, begin, length)
 
             else:
-                print(f'Unexpected message id {message_id} from {addr}')
+                print(f"Unexpected message id {message_id} from {addr}")
 
-        print(f'Connection closed by {addr}')
+        print(f"Connection closed by {addr}")
         writer.close()
 
-    
     def is_valid_handshake(self, handshake):
         recv_hash = handshake[28:48]
         return recv_hash == self.info_hash
 
     async def send_piece(self, writer, index, begin, length):
         try:
-            pretty_print(f'Sending piece {index} (offset {begin}, length {length})', "green")
+            pretty_print(
+                f"Sending piece {index} (offset {begin}, length {length})", "green"
+            )
 
             # Read the requested piece from the file
             piece_data = self.filewriter.read_piece(index, begin, length)
+            
 
             # Send piece message: length prefix (4 bytes) + message ID (1 byte) + piece index (4 bytes) + block offset (4 bytes) + block data
             writer.write(struct.pack(">IbII", 9 + len(piece_data), PIECE, index, begin))
             writer.write(piece_data)
+            self.torrent.uploaded += len(piece_data)
 
             await writer.drain()
         except Exception as e:
-            print(f'Error sending piece {index} (offset {begin}, length {length}): {e}')
+            print(f"Error sending piece {index} (offset {begin}, length {length}): {e}")
             writer.close()
             return
